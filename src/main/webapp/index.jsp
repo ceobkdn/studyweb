@@ -599,4 +599,366 @@
         }
 
         async function onFilterChange() {
-            update
+            updateSearchResults();
+        }
+
+        async function updateSearchResults() {
+            const searchTerm = document.getElementById('search-box').value;
+            const folderFilter = document.getElementById('folder-filter').value;
+            const progressFilter = document.getElementById('progress-filter').value;
+            
+            try {
+                const params = new URLSearchParams();
+                if (searchTerm) params.append('search', searchTerm);
+                if (folderFilter !== 'all') params.append('folder', folderFilter);
+                if (progressFilter !== 'all') params.append('progress', progressFilter);
+                
+                const response = await fetch(`/api/materials?${params}`);
+                const data = await response.json();
+                
+                displaySearchResults(data.materials);
+            } catch (error) {
+                showMessage('❌ Lỗi khi tìm kiếm: ' + error.message, 'error');
+            }
+        }
+
+        function displaySearchResults(materials) {
+            let html = '';
+            
+            if (materials.length === 0) {
+                html = `
+                    <div class="text-center text-muted py-5">
+                        <h3>🔍 Không tìm thấy kết quả</h3>
+                        <p>Thử thay đổi từ khóa tìm kiếm hoặc bộ lọc</p>
+                    </div>
+                `;
+            } else {
+                html = `<h4 class="text-primary mb-3">🔍 KẾT QUẢ TÌM KIẾM (${materials.length} tài liệu)</h4>`;
+                materials.forEach(material => {
+                    html += createFileItem(material);
+                });
+            }
+            
+            document.getElementById('search-results').innerHTML = html;
+        }
+
+        async function onRescan() {
+            showLoading(true);
+            showMessage('🔄 Đang quét lại tài liệu...', 'info');
+            
+            try {
+                const response = await fetch('/api/scan');
+                const data = await response.json();
+                
+                currentMaterials = data.materials;
+                await loadStats();
+                updateOverview();
+                
+                // Recreate folder tabs
+                recreateFolderTabs();
+                
+                showMessage('✅ Đã hoàn thành quét lại tài liệu!', 'success');
+            } catch (error) {
+                showMessage('❌ Lỗi khi quét lại: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function onSave() {
+            try {
+                const response = await fetch('/api/save', { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showMessage('💾 Đã lưu tiến độ thành công!', 'success');
+                } else {
+                    showMessage('❌ Lỗi khi lưu: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('❌ Lỗi khi lưu: ' + error.message, 'error');
+            }
+        }
+
+        async function onExport() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+                
+                // Create and download CSV
+                exportStatsToCSV(data.folders);
+                showMessage('📊 Đã xuất thống kê thành công!', 'success');
+            } catch (error) {
+                showMessage('❌ Lỗi khi xuất thống kê: ' + error.message, 'error');
+            }
+        }
+
+        async function updateProgress(path, progress) {
+            try {
+                const formData = new FormData();
+                formData.append('path', path);
+                formData.append('progress', progress);
+                
+                const response = await fetch('/api/update-progress', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update local data
+                    const material = currentMaterials.find(m => m.path === path);
+                    if (material) {
+                        material.completed = parseInt(progress);
+                        material.lastUpdated = new Date().toLocaleString('vi-VN');
+                    }
+                    
+                    // Refresh stats
+                    await loadStats();
+                    updateOverview();
+                    
+                    showMessage(`✅ Cập nhật '${path.split('/').pop()}' thành ${progress}%`, 'success');
+                } else {
+                    showMessage('❌ Lỗi khi cập nhật: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('❌ Lỗi khi cập nhật: ' + error.message, 'error');
+            }
+        }
+
+        async function bulkUpdateProgress(folderName) {
+            const selectElement = document.getElementById(`bulk-${folderName}`);
+            const progress = selectElement.value;
+            
+            try {
+                const formData = new FormData();
+                formData.append('folder', folderName);
+                formData.append('progress', progress);
+                
+                const response = await fetch('/api/bulk-update', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Update local data
+                    currentMaterials.forEach(material => {
+                        if (material.folderName === folderName) {
+                            material.completed = parseInt(progress);
+                            material.lastUpdated = new Date().toLocaleString('vi-VN');
+                        }
+                    });
+                    
+                    // Refresh display
+                    await loadStats();
+                    updateOverview();
+                    recreateFolderTabs();
+                    
+                    showMessage(data.message, 'success');
+                } else {
+                    showMessage('❌ Lỗi khi cập nhật hàng loạt: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('❌ Lỗi khi cập nhật hàng loạt: ' + error.message, 'error');
+            }
+        }
+
+        function playVideo(path) {
+            currentMediaPath = path;
+            const mediaViewer = document.getElementById('media-viewer');
+            const mediaContent = document.getElementById('media-content');
+            
+            const fileName = path.split('/').pop();
+            
+            mediaContent.innerHTML = `
+                <div class="border rounded p-3 mb-3" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                    <h5 class="mb-1">🎥 ${fileName}</h5>
+                    <small>Đường dẫn: ${path}</small>
+                </div>
+                <video width="100%" height="450" controls preload="auto" class="rounded">
+                    <source src="/materials/${path}" type="video/mp4">
+                    Trình duyệt của bạn không hỗ trợ thẻ video.
+                </video>
+                <div class="mt-3">
+                    <label class="form-label fw-bold">Đánh dấu tiến độ:</label>
+                    <div class="btn-group">
+                        <button class="btn btn-info btn-sm" onclick="updateProgressFromMedia('${path}', 25)">25%</button>
+                        <button class="btn btn-warning btn-sm" onclick="updateProgressFromMedia('${path}', 50)">50%</button>
+                        <button class="btn btn-success btn-sm" onclick="updateProgressFromMedia('${path}', 75)">75%</button>
+                        <button class="btn btn-success btn-sm" onclick="updateProgressFromMedia('${path}', 100)">✅ Hoàn thành</button>
+                    </div>
+                </div>
+            `;
+            
+            mediaViewer.style.display = 'block';
+            mediaViewer.scrollIntoView({ behavior: 'smooth' });
+            
+            showMessage(`🎥 Đang phát: ${fileName}`, 'info');
+        }
+
+        async function viewFile(path) {
+            currentMediaPath = path;
+            const mediaViewer = document.getElementById('media-viewer');
+            const mediaContent = document.getElementById('media-content');
+            
+            const fileName = path.split('/').pop();
+            
+            try {
+                const response = await fetch(`/api/file-content?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+                
+                let contentHtml = '';
+                if (path.toLowerCase().endsWith('.pdf')) {
+                    contentHtml = `
+                        <p class="text-muted">📄 PDF File - Tải xuống để xem</p>
+                        <a href="/materials/${path}" class="btn btn-danger" download>Tải PDF</a>
+                    `;
+                } else if (path.toLowerCase().endsWith('.ipynb')) {
+                    contentHtml = `
+                        <p class="text-muted">📓 Jupyter Notebook</p>
+                        <a href="/materials/${path}" class="btn btn-primary" target="_blank">Mở Notebook</a>
+                    `;
+                } else {
+                    contentHtml = `
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            <pre class="bg-light p-3 rounded">${data.content}</pre>
+                        </div>
+                    `;
+                }
+                
+                mediaContent.innerHTML = `
+                    <div class="border rounded p-3 mb-3" style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white;">
+                        <h5 class="mb-1">${getMaterialIcon(fileName)} ${fileName}</h5>
+                        <small>Đường dẫn: ${path}</small>
+                    </div>
+                    ${contentHtml}
+                    <div class="mt-3">
+                        <label class="form-label fw-bold">Đánh dấu tiến độ:</label>
+                        <div class="btn-group">
+                            <button class="btn btn-info btn-sm" onclick="updateProgressFromMedia('${path}', 25)">25%</button>
+                            <button class="btn btn-warning btn-sm" onclick="updateProgressFromMedia('${path}', 50)">50%</button>
+                            <button class="btn btn-success btn-sm" onclick="updateProgressFromMedia('${path}', 75)">75%</button>
+                            <button class="btn btn-success btn-sm" onclick="updateProgressFromMedia('${path}', 100)">✅ Hoàn thành</button>
+                        </div>
+                    </div>
+                `;
+                
+                mediaViewer.style.display = 'block';
+                mediaViewer.scrollIntoView({ behavior: 'smooth' });
+                
+                showMessage(`📄 Đang xem: ${fileName}`, 'info');
+                
+            } catch (error) {
+                showMessage('❌ Lỗi khi đọc file: ' + error.message, 'error');
+            }
+        }
+
+        async function updateProgressFromMedia(path, progress) {
+            await updateProgress(path, progress);
+        }
+
+        function closeMediaViewer() {
+            document.getElementById('media-viewer').style.display = 'none';
+            currentMediaPath = null;
+        }
+
+        function recreateFolderTabs() {
+            // Remove existing folder tabs
+            const tabsNav = document.getElementById('main-tabs');
+            const tabsContent = document.getElementById('main-tab-content');
+            
+            // Remove tabs beyond the first 2 (overview and search)
+            while (tabsNav.children.length > 2) {
+                tabsNav.removeChild(tabsNav.lastChild);
+            }
+            while (tabsContent.children.length > 2) {
+                tabsContent.removeChild(tabsContent.lastChild);
+            }
+            
+            // Recreate folder tabs
+            createFolderTabs();
+        }
+
+        function exportStatsToCSV(folderStats) {
+            let csvContent = "Thư mục,Tổng số tài liệu,Đã hoàn thành,Đang thực hiện,Chưa bắt đầu,Tiến độ trung bình (%)\n";
+            
+            Object.entries(folderStats).forEach(([folderName, stats]) => {
+                const partial = stats.total - stats.completed - (stats.total - stats.completed);
+                const notStarted = stats.total - stats.completed - partial;
+                
+                csvContent += `"${stats.folderDesc}",${stats.total},${stats.completed},${partial},${notStarted},${stats.avgProgress.toFixed(1)}\n`;
+            });
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+            
+            link.setAttribute('href', url);
+            link.setAttribute('download', `learning_stats_${new Date().toISOString().split('T')[0]}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function getMaterialIcon(filename) {
+            const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+            const icons = {
+                '.pdf': '📄', '.doc': '📝', '.docx': '📝', '.txt': '📄', '.md': '📄',
+                '.mp4': '🎥', '.avi': '🎥', '.mkv': '🎥', '.mov': '🎥', '.wmv': '🎥',
+                '.ppt': '📊', '.pptx': '📊', '.xls': '📊', '.xlsx': '📊',
+                '.ipynb': '📓', '.py': '🐍', '.js': '📜', '.html': '🌐',
+                '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️',
+                '.zip': '📦', '.rar': '📦', '.7z': '📦',
+                '.csv': '📊', '.json': '📄'
+            };
+            return icons[ext] || '📁';
+        }
+
+        // Utility functions
+        function showLoading(show) {
+            document.getElementById('loading-spinner').style.display = show ? 'block' : 'none';
+        }
+
+        function showMessage(message, type) {
+            const container = document.getElementById('message-container');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            messageDiv.innerHTML = message;
+            
+            container.innerHTML = '';
+            container.appendChild(messageDiv);
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                if (messageDiv.parentNode) {
+                    messageDiv.parentNode.removeChild(messageDiv);
+                }
+            }, 5000);
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        function updateOverview() {
+            // This function is called when overview needs to be refreshed
+            loadStats().then(() => {
+                // Overview is automatically updated in loadStats
+            });
+        }
+    </script>
+</body>
+</html>
