@@ -212,3 +212,33 @@ public class StudyProgressServlet extends HttpServlet {
                     updatedCount++;
                 }
             }
+            
+            service.saveProgress(materials);
+            writeJsonResponse(resp, Map.of("success", true, "message", "Updated " + updatedCount + " files"));
+            
+        } catch (NumberFormatException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            writeJsonResponse(resp, Map.of("error", "Invalid progress value"));
+        }
+    }
+    
+    private void saveProgress(HttpServletRequest req, HttpServletResponse resp) 
+            throws IOException {
+        
+        List<StudyProgressModel> materials = service.initializeData();
+        boolean success = service.saveProgress(materials);
+        
+        if (success) {
+            writeJsonResponse(resp, Map.of("success", true, "message", "Progress saved"));
+        } else {
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            writeJsonResponse(resp, Map.of("error", "Failed to save progress"));
+        }
+    }
+    
+    private void writeJsonResponse(HttpServletResponse resp, Object data) throws IOException {
+        try (PrintWriter writer = resp.getWriter()) {
+            objectMapper.writeValue(writer, data);
+        }
+    }
+}
